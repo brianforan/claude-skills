@@ -1,0 +1,67 @@
+# ===== Secrets & local environment =====
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+*.kdbx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+!*.pub
+.netrc
+.htpasswd
+credentials*.json
+*service-account*.json
+*.har
+
+# ===== Infrastructure state =====
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+kubeconfig*
+.vercel/
+.netlify/
+
+# ===== Local-only (convention: *.local.* never leaves this machine) =====
+*.local
+*.local.*
+docker-compose.override.yml
+.private/
+
+# ===== AI assistant local state =====
+CLAUDE.local.md
+.claude/settings.local.json
+.aider*
+.specstory/
+
+# ===== OS / editor =====
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ===== Logs, caches, scratch =====
+*.log
+logs/
+tmp/
+.cache/
+# Uncomment if local databases/dumps live in the tree:
+# *.sqlite
+# *.db
+# *.sql
+
+# ===== Stack-specific patterns below (add from github/gitignore templates) =====

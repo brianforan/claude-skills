@@ -1,0 +1,20 @@
+# Ships the apps' ECS JSON log files (logs/*.ndjson) to the local Elasticsearch.
+filebeat.inputs:
+  - type: filestream
+    id: app-logs
+    paths:
+      - /logs/*.ndjson
+    parsers:
+      - ndjson:
+          target: ""            # put the ECS fields at the document root
+          overwrite_keys: true  # let the app's @timestamp/message win
+          expand_keys: true     # "log.level" -> log: { level }
+          add_error_key: true
+
+# No add_host_metadata/add_docker_metadata: they would record the machine's hostname.
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+
+setup.kibana:
+  host: "http://kibana:5601"

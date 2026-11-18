@@ -1,0 +1,67 @@
+# Local development services. Everything binds to 127.0.0.1: never expose this config.
+#   docker compose up -d                            -> postgres
+#   docker compose --profile observability up -d    -> + elasticsearch, kibana, filebeat
+# Image versions come from .env.
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:?set POSTGRES_VERSION in .env}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Postgres 18+ images: mount /var/lib/postgresql. For 17 and older use /var/lib/postgresql/data.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  elasticsearch:
+    profiles: [observability]
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:?set ELASTIC_VERSION in .env}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false" # local only; safe because the port binds to 127.0.0.1
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      retries: 30
+
+  kibana:
+    profiles: [observability]
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION}
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "127.0.0.1:5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  filebeat:
+    profiles: [observability]
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION}
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./infra/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./logs:/logs:ro
+      - fbdata:/usr/share/filebeat/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  esdata:
+  fbdata:

@@ -1,0 +1,86 @@
+#!/bin/sh
+# git-cleanup pre-commit guard: plain sh + git, no other runtime needed.
+# Lives in .git/hooks, so it is local and never published.
+# Blocks a commit when the staged content has a sensitive file name, a high-confidence secret,
+# or a term from .git/info/private-terms (one per line, # comments allowed).
+# Accept a reviewed value: add it to .git/info/git-cleanup-allow, or put "gitleaks:allow" on that line.
+
+gitdir=$(git rev-parse --git-dir) || exit 1
+terms="$gitdir/info/private-terms"
+allow="$gitdir/info/git-cleanup-allow"
+tmp="$gitdir/git-cleanup.tmp"
+trap 'rm -f "$tmp" "$tmp.terms" "$tmp.allow"' EXIT
+status=0
+
+[ -n "$(git diff --cached --name-only --diff-filter=ACMR)" ] || exit 0
+
+staged() { git diff --cached --name-only --diff-filter=ACMR -z; }
+
+clean_list() { tr -d '\r' < "$1" | grep -v '^#' | grep -v '^[[:space:]]*$'; }
+
+: > "$tmp.allow"
+[ -f "$allow" ] && clean_list "$allow" > "$tmp.allow"
+
+# keep path:line only (never echo the matched value), dropping allow-listed lines
+report() {
+  grep -v 'gitleaks:allow' "$tmp" |
+    { if [ -s "$tmp.allow" ]; then grep -v -F -f "$tmp.allow"; else cat; fi; } |
+    cut -d: -f1,2 | sort -u
+}
+
+# 1. sensitive file names
+names=$(git diff --cached --name-only --diff-filter=ACMR |
+  grep -E '(^|/)(\.env(\.[^/]*)?|id_(rsa|ed25519|ecdsa|dsa)|[^/]*\.(pem|key|p12|pfx|jks|keystore|ppk|kdbx|tfstate)|credentials[^/]*\.json|[^/]*service-account[^/]*\.json|CLAUDE\.local\.md|\.claude/settings\.local\.json)$' |
+  grep -vE '\.env\.(example|sample|template)$')
+if [ -n "$names" ]; then
+  echo "git-cleanup BLOCK  sensitive file staged:" >&2
+  echo "$names" | sed 's/^/  /' >&2
+  status=1
+fi
+
+# 2. high-confidence secrets
+staged | xargs -0 git grep --cached -n -I -E \
+  -e '-----BEGIN ([A-Z]+ )?PRIVATE KEY' \
+  -e '(AKIA|ASIA)[0-9A-Z]{16}' \
+  -e 'gh[pousr]_[A-Za-z0-9]{36,}' \
+  -e 'github_pat_[A-Za-z0-9_]{60,}' \
+  -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
+  -e 'sk-(proj-|svcacct-)?[A-Za-z0-9_-]{32,}' \
+  -e '[rs]k_live_[0-9A-Za-z]{20,}' \
+  -e 'xox[abprs]-[0-9A-Za-z-]{10,}' \
+  -e 'hooks\.slack\.com/services/[A-Za-z0-9/]+' \
+  -e 'discord(app)?\.com/api/webhooks/[0-9]+/' \
+  -e 'AIza[0-9A-Za-z_-]{35}' \
+  -e 'npm_[A-Za-z0-9]{36}' \
+  -- > "$tmp" 2>/dev/null
+hits=$(report)
+if [ -n "$hits" ]; then
+  echo "git-cleanup BLOCK  possible secret (value not shown):" >&2
+  echo "$hits" | sed 's/^/  /' >&2
+  status=1
+fi
+
+# 3. private terms (names, emails, username, hostname, employer, ...)
+if [ -f "$terms" ]; then
+  clean_list "$terms" > "$tmp.terms"
+  if [ -s "$tmp.terms" ]; then
+    staged | xargs -0 git grep --cached -n -I -i -w -F -f "$tmp.terms" -- > "$tmp" 2>/dev/null
+    hits=$(report)
+    if [ -n "$hits" ]; then
+      echo "git-cleanup BLOCK  private term found:" >&2
+      echo "$hits" | sed 's/^/  /' >&2
+      status=1
+    fi
+  fi
+fi
+
+# 4. gitleaks, if installed, for its much larger rule set
+if command -v gitleaks >/dev/null 2>&1; then
+  # gitleaks >= 8.19; older versions use: gitleaks protect --staged --redact
+  gitleaks git --pre-commit --staged --redact --no-banner || status=1
+fi
+
+if [ $status -ne 0 ]; then
+  echo "git-cleanup: commit blocked. Fix the files above, or allow-list a value you have reviewed." >&2
+fi
+exit $status
